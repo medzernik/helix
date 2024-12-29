@@ -1,6 +1,6 @@
 use crate::config::{Config, ConfigLoadError};
 use crossterm::{
-    style::{Color, StyledContent, Stylize},
+    style::{Color, Print, Stylize},
     tty::IsTty,
 };
 use helix_core::config::{default_lang_config, user_lang_config};
@@ -164,20 +164,25 @@ pub fn languages_all() -> std::io::Result<()> {
     let column_width = terminal_cols as usize / headings.len();
     let is_terminal = std::io::stdout().is_tty();
 
-    let fit = |s: &str| -> StyledContent<String> {
-        format!(
-            "{:column_width$}",
-            s.get(..column_width - 2)
+    let column = |item: &str, color: Color| {
+        let mut data = format!(
+            "{:width$}",
+            item.get(..column_width - 2)
                 .map(|s| format!("{}…", s))
-                .unwrap_or_else(|| s.to_string())
-        )
-        .stylize()
+                .unwrap_or_else(|| item.to_string()),
+            width = column_width,
+        );
+        if is_terminal {
+            data = data.stylize().with(color).to_string();
+        }
+
+        // We can't directly use println!() because of
+        // https://github.com/crossterm-rs/crossterm/issues/589
+        let _ = crossterm::execute!(std::io::stdout(), Print(data));
     };
-    let color = |s: StyledContent<String>, c: Color| if is_terminal { s.with(c) } else { s };
-    let bold = |s: StyledContent<String>| if is_terminal { s.bold() } else { s };
 
     for heading in headings {
-        write!(stdout, "{}", bold(fit(heading)))?;
+        column(heading, Color::White);
     }
     writeln!(stdout)?;
 
@@ -187,14 +192,14 @@ pub fn languages_all() -> std::io::Result<()> {
 
     let check_binary = |cmd: Option<&str>| match cmd {
         Some(cmd) => match helix_stdx::env::which(cmd) {
-            Ok(_) => color(fit(&format!("✓ {}", cmd)), Color::Green),
-            Err(_) => color(fit(&format!("✘ {}", cmd)), Color::Red),
+            Ok(_) => column(&format!("✓ {}", cmd), Color::Green),
+            Err(_) => column(&format!("✘ {}", cmd), Color::Red),
         },
-        None => color(fit("None"), Color::Yellow),
+        None => column("None", Color::Yellow),
     };
 
     for lang in &syn_loader_conf.language {
-        write!(stdout, "{}", fit(&lang.language_id))?;
+        column(&lang.language_id, Color::Reset);
 
         let mut cmds = lang.language_servers.iter().filter_map(|ls| {
             syn_loader_conf
@@ -202,28 +207,28 @@ pub fn languages_all() -> std::io::Result<()> {
                 .get(&ls.name)
                 .map(|config| config.command.as_str())
         });
-        write!(stdout, "{}", check_binary(cmds.next()))?;
+        check_binary(cmds.next());
 
         let dap = lang.debugger.as_ref().map(|dap| dap.command.as_str());
-        write!(stdout, "{}", check_binary(dap))?;
+        check_binary(dap);
 
         let formatter = lang
             .formatter
             .as_ref()
             .map(|formatter| formatter.command.as_str());
-        write!(stdout, "{}", check_binary(formatter))?;
+        check_binary(formatter);
 
         for ts_feat in TsFeature::all() {
             match load_runtime_file(&lang.language_id, ts_feat.runtime_filename()).is_ok() {
-                true => write!(stdout, "{}", color(fit("✓"), Color::Green))?,
-                false => write!(stdout, "{}", color(fit("✘"), Color::Red))?,
+                true => column("✓", Color::Green),
+                false => column("✘", Color::Red),
             }
         }
 
         writeln!(stdout)?;
 
         for cmd in cmds {
-            write!(stdout, "{}", fit(""))?;
+            column("", Color::Reset);
             check_binary(Some(cmd));
             writeln!(stdout)?;
         }
